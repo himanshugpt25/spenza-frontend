@@ -1,22 +1,66 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { getSubscriptionEvents } from "./api";
 import { EventsTable } from "./components/EventsTable";
 import { Button } from "../../components/ui/Button";
+import { socket } from "../../lib/socket";
+import type { WebhookEvent } from "../../types/subscription";
 
 export const SubscriptionEventsPage = () => {
   const { id } = useParams<{ id: string }>();
   const [page, setPage] = useState(1);
   const limit = 10;
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["subscription-events", id, page],
     queryFn: () => getSubscriptionEvents(id!, page, limit),
     enabled: !!id,
-    refetchInterval: 5000, // Auto-refresh every 5 seconds
     placeholderData: keepPreviousData,
   });
+
+  useEffect(() => {
+    if (!id) return;
+
+    // Connect socket only when this page is mounted
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    // Join subscription room
+    socket.emit("join_subscription", id);
+
+    const handleEventProcessed = (newEvent: WebhookEvent) => {
+      console.log("New event received:", newEvent);
+      
+      // Update cache optimistically
+      queryClient.setQueryData(
+        ["subscription-events", id, 1],
+        (oldData: { events: WebhookEvent[]; total: number } | undefined) => {
+          if (!oldData) return undefined;
+          
+          return {
+            ...oldData,
+            total: oldData.total + 1,
+            events: [newEvent, ...oldData.events].slice(0, limit),
+          };
+        }
+      );
+    };
+
+    socket.on("event_processed", handleEventProcessed);
+
+    return () => {
+      socket.emit("leave_subscription", id);
+      socket.off("event_processed", handleEventProcessed);
+      
+      // Disconnect socket when leaving the page
+      if (socket.connected) {
+        socket.disconnect();
+      }
+    };
+  }, [id, queryClient]);
 
   const events = data?.events ?? [];
   const total = data?.total ?? 0;

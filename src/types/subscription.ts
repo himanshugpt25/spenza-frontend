@@ -15,3 +15,14 @@ export type CreateSubscriptionPayload = {
 };
 
 
+export interface WebhookEvent {
+  id: string;
+  subscriptionId: string;
+  payload: any;
+  status: "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED";
+  attemptCount: number;
+  lastError?: string;
+  responseStatus?: number;
+  createdAt: string;
+  updatedAt: string;
+}
